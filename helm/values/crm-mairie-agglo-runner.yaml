@@ -41,14 +41,17 @@ envFromSecretRefs:
 
 # Probes sur les endpoints du mini HTTP server intégré au runner
 # (cf. _start_health_server dans telegram/management/commands/telegram_runner.py)
+# Le runner expose un vrai endpoint HTTP, donc on garde httpGet (tcp: false).
 probes:
   liveness:
     enabled: true
+    tcp: false
     path: /healthz
     initialDelaySeconds: 30
     periodSeconds: 30
   readiness:
     enabled: true
+    tcp: false
     path: /readyz
     initialDelaySeconds: 10
     periodSeconds: 10

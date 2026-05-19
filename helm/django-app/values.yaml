@@ -66,13 +66,19 @@ envFromSecretRefs: []
 #   - name: app-secrets
 
 probes:
+  # Default tcpSocket : check juste que gunicorn écoute sur le port, sans
+  # Host header (les probes HTTP de Django rejetteraient avec 400 si l'IP du
+  # pod n'est pas dans ALLOWED_HOSTS). Override avec tcp: false + path: /qqc
+  # pour les apps qui exposent un vrai endpoint HTTP de healthcheck.
   liveness:
     enabled: true
+    tcp: true
     path: /
     initialDelaySeconds: 30
     periodSeconds: 30
   readiness:
     enabled: true
+    tcp: true
     path: /
     initialDelaySeconds: 10
     periodSeconds: 10

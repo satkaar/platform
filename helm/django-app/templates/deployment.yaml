@@ -42,17 +42,27 @@ spec:
             {{- end }}
           {{- if .Values.probes.liveness.enabled }}
           livenessProbe:
+            {{- if .Values.probes.liveness.tcp }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.probes.liveness.path }}
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           {{- end }}
           {{- if .Values.probes.readiness.enabled }}
           readinessProbe:
+            {{- if .Values.probes.readiness.tcp }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.probes.readiness.path }}
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           {{- end }}

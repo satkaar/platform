@@ -32,13 +32,18 @@ spec:
           command:
             {{- toYaml .Values.migrationJob.command | nindent 12 }}
           envFrom:
-            - configMapRef:
-                name: {{ include "django-app.fullname" . }}-env
             {{- range .Values.envFromSecretRefs }}
             - secretRef:
                 name: {{ .name }}
             {{- end }}
           env:
+            # Le ConfigMap n'existe pas encore au moment où le hook s'exécute
+            # (pre-install/pre-upgrade tournent avant les autres resources).
+            # Donc on inline les env vars directement ici plutôt que via configMapRef.
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
             {{- range $key, $ref := .Values.envFromSecrets }}
             - name: {{ $key }}
               valueFrom:
