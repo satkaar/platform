@@ -1,0 +1,107 @@
+# Reusable workflow appelé par chaque app Django via :
+#
+#   jobs:
+#     ci:
+#       uses: satkaar/platform/.github/workflows/reusable-django-ci.yml@main
+#       with:
+#         python-version: "3.12"
+#
+# Pré-requis côté repo platform :
+#   Settings → Actions → General → Access → "Accessible from repositories
+#   owned by 'satkaar'" (sinon les apps ne peuvent pas réutiliser ce workflow).
+#
+# Pré-requis côté app appelante : aucun secret (CI tourne en sandbox).
+#
+# Postgres 16 en service container pour matcher la prod (RDB Scaleway).
+
+name: Django CI (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Version Python à installer (default 3.12).
+        type: string
+        required: false
+        default: "3.12"
+      run-makemigrations-check:
+        description: Vérifie que les migrations sont à jour avec les models.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  django:
+    name: Django check + tests (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      # SECRET_KEY requis pour `manage.py check` côté CRM (settings fait
+      # _required_env). Fixé sur run_id pour ne JAMAIS coïncider avec la prod.
+      DJANGO_SECRET_KEY: "ci-not-secret-${{ github.run_id }}"
+      DEBUG: "False"
+      ALLOWED_HOSTS: "*"
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_test"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: makemigrations --check (drift schéma ↔ models)
+        if: ${{ inputs.run-makemigrations-check }}
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run tests
+        run: python manage.py test --verbosity 2
+
+  hadolint:
+    name: Dockerfile lint (hadolint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # warning : level utile (DL3008, DL3009…) sans bloquer pour
+          # un détail mineur. Passer à `error` quand le repo est propre.
+          failure-threshold: warning
+          no-fail: false

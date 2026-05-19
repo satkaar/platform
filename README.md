@@ -365,3 +365,203 @@ kubectl -n entreprise get events --sort-by=.lastTimestamp
 # Accéder à un shell dans un pod
 kubectl -n entreprise exec -it deployment/entreprise -- /bin/sh
 ```
+
+---
+
+## CI/CD GitHub Actions (preprod + prod)
+
+Chaque app (entreprise, ecole, creche, association, document-citoyen, crm-mairie-agglo) a un `.github/workflows/` qui appelle deux **reusable workflows** centralisés dans ce repo :
+
+- `platform/.github/workflows/reusable-django-ci.yml` — tests Django sur Postgres 16 + hadolint
+- `platform/.github/workflows/reusable-deploy.yml` — build buildx, scan Trivy, helm upgrade --atomic, smoke test
+
+### Mapping branche → environnement
+
+| Branche push | Environnement | Namespace K8s | Hôte | Approval |
+|---|---|---|---|---|
+| `preprod` | `preprod` | `<app>-preprod` | `preprod.<sub>.satkaar.io` | non |
+| `main` | `prod` | `<app>` | `<sub>.satkaar.io` | **required reviewer** (GitHub Environment) |
+| `workflow_dispatch` | au choix | selon input | selon input | selon env |
+
+PR et push sur `develop` ne déclenchent que la CI (tests + lint), pas de deploy.
+
+### Mode parallèle Kapsule ↔ Serverless Containers (cutover)
+
+Pendant la phase de migration, les apps `document-citoyen` et `crm-mairie-agglo` ont **deux** workflows de deploy qui tournent en doublon sur les mêmes triggers :
+
+| Workflow | Cible | Fichier | À garder jusqu'à |
+|---|---|---|---|
+| 🚢 Build & Deploy (Kapsule) | nouveau cluster Kapsule | `.github/workflows/deploy.yml` | définitif |
+| 🚀 Deploy Serverless Containers (prod) [LEGACY] | ancienne infra Scaleway Serverless | `.github/workflows/deploy-serverless.yml` | DNS cutover validé |
+| 🧪 Deploy Serverless Containers (preprod) [LEGACY] | (document-citoyen uniquement) | `.github/workflows/deploy-serverless-preprod.yml` | DNS cutover validé |
+
+**Pourquoi tourner les deux en parallèle :**
+- Le DNS prod pointe encore sur les Serverless Containers → l'ancienne pipe doit continuer à servir le trafic réel.
+- En même temps Kapsule reçoit les mêmes images et les mêmes migrations → on valide en continu que la nouvelle infra suit le code.
+- Smoke test Kapsule = test sur `preprod.<sub>.satkaar.io` (DNS déjà fonctionnel) ou sur `<sub>.satkaar.io` (qui pointe pas encore sur Kapsule → le smoke test échouera tant que le DNS n'a pas basculé — c'est normal et attendu pour la branche `main`).
+- Quand le DNS bascule, on désactive les workflows legacy.
+
+**Désactiver les workflows legacy au cutover :**
+
+```bash
+# Renommer en .yml.disabled (GitHub Actions ignore les fichiers non-.yml)
+# document-citoyen
+mv .github/workflows/deploy-serverless.yml .github/workflows/deploy-serverless.yml.disabled
+mv .github/workflows/deploy-serverless-preprod.yml .github/workflows/deploy-serverless-preprod.yml.disabled
+
+# crm-mairie-agglo
+mv .github/workflows/deploy-serverless.yml .github/workflows/deploy-serverless.yml.disabled
+
+git add -A && git commit -m "chore(ci): disable legacy Serverless Containers workflows (cutover terminé)"
+```
+
+Garder les fichiers `.disabled` ~7 jours après cutover : si rollback nécessaire (`mv X.disabled X`) tu peux remettre les Serverless Containers en service en 1 commit.
+
+**Note CI** : un seul `ci.yml` reste — il teste le code qui est build pour les DEUX infras (même Dockerfile, mêmes migrations Postgres). Pas besoin de doublon côté CI.
+
+### Pipeline de deploy
+
+```
+push branch
+   │
+   ▼
+resolve-env ──► build ──► scan (Trivy) ──► deploy ──► smoke-test ──► [deploy-runner si CRM]
+                                              ▲
+                                              │ Approval manuelle GitHub UI
+                                              │ uniquement pour prod
+```
+
+Best-practices appliquées :
+
+- **`concurrency`** : un push ne tue pas un deploy en cours (cancel-in-progress: false)
+- **Tags d'image immuables** : `<env>-<sha12>` épinglé dans `--set image.tag`, force le re-pull K8s
+- **`helm upgrade --atomic --wait --timeout 10m`** : rollback automatique si rollout échoue
+- **Trivy SARIF** : remonte les CVE dans GitHub Security tab, bloque sur CRITICAL/HIGH non-unfixed
+- **Build cache `type=registry`** : layers cachées par env pour des builds rapides
+- **`provenance: false`, `sbom: false`** : compat avec Scaleway Container Registry (refuse les attestations OCI)
+- **Pre-deploy guard** : refuse le deploy si namespace ou secret `db-credentials` manquant (faute de Terraform appliqué)
+- **Smoke test** : 18 retries × 10s sur l'URL HTTPS publique, accepte 200/301/302/401/403
+- **`permissions: contents: read`** par défaut, `security-events: write` uniquement sur scan
+- **GitHub Environments** : `preprod` (open) et `production` (required reviewer + déploiement journalisé)
+- **Dependabot** : pip hebdomadaire + actions hebdomadaire + base Docker mensuelle
+- **PR template** : checklist tests/migrations/secrets
+
+### Setup une fois pour toutes
+
+#### 1. Activer le partage du repo platform pour les reusable workflows
+
+`satkaar/platform` → Settings → Actions → General → **Access** :
+- Cocher **« Accessible from repositories owned by 'satkaar' »**
+
+Sans ça les 6 apps ne peuvent pas faire `uses: satkaar/platform/.github/workflows/...@main`.
+
+#### 2. Créer les GitHub Environments dans chaque app repo
+
+Pour chacun des 6 repos applicatifs : Settings → Environments → New environment.
+
+| Name | Required reviewers | Wait timer | Deployment branches |
+|---|---|---|---|
+| `preprod` | aucun | 0 min | uniquement `preprod` |
+| `production` | toi-même (ou équipe) | 0 min (ou 5 min pour rollback rapide) | uniquement `main` |
+
+#### 3. Configurer les secrets/vars (au niveau org `satkaar` ou par repo)
+
+**Secrets** (Settings → Secrets and variables → Actions → Secrets) :
+
+| Nom | Valeur | Scope |
+|---|---|---|
+| `SCW_ACCESS_KEY` | clé IAM Scaleway (Container Registry + Kapsule read/write) | org ou repo |
+| `SCW_SECRET_KEY` | secret IAM Scaleway | org ou repo |
+| `PLATFORM_REPO_TOKEN` | fine-grained PAT, scope `satkaar/platform` → Contents: read | org ou repo |
+
+**Variables** (Settings → Secrets and variables → Actions → Variables) :
+
+| Nom | Valeur | Scope |
+|---|---|---|
+| `SCW_DEFAULT_PROJECT_ID` | ID du projet Scaleway (output `make shared-output`) | org ou repo |
+| `SCW_DEFAULT_ORGANIZATION_ID` | ID de l'org Scaleway | org ou repo |
+
+Recommandé : configurer en **org-level** pour éviter les 6 répétitions.
+
+#### 4. Provisionner l'infrastructure preprod (Terraform)
+
+Le fichier `terraform/envs/prod/preprod.tf` ajoute :
+- 6 databases preprod (`<db_name>_preprod`) + users + privileges sur la **même instance Postgres mutualisée** (cf. answer pattern : ns séparés, DB séparées, instance unique → ~+0 € pour la DB en plus de l'existant, seules les CPU/RAM Postgres sont partagées)
+- 6 namespaces K8s `<app>-preprod` + secret `db-credentials`
+- 6 records DNS A `preprod.<sub>.satkaar.io` → IP LB Ingress
+
+```bash
+cd platform/terraform
+make prod-apply           # crée DB + namespaces + secrets preprod
+make prod-apply-dns       # crée les records DNS preprod (une fois l'IP LB stable)
+```
+
+#### 5. Créer les secrets applicatifs dans les namespaces preprod
+
+Comme pour la prod, les secrets non-DB (DJANGO_SECRET_KEY, KATARINA_CRM_TOKEN, MISTRAL, S3, SMTP…) ne sont **pas** provisionnés par Terraform — à créer manuellement :
+
+```bash
+# document-citoyen preprod
+kubectl -n document-citoyen-preprod create secret generic document-citoyen-secrets \
+  --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32) \
+  --from-literal=KATARINA_CRM_TOKEN=<token-preprod> \
+  --from-literal=CRM_WEBHOOK_SECRET=<secret-preprod> \
+  --from-literal=AWS_ACCESS_KEY_ID=<...> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<...> \
+  --from-literal=AWS_STORAGE_BUCKET_NAME=katarina-media-preprod
+
+# crm-mairie-agglo preprod
+kubectl -n crm-mairie-agglo-preprod create secret generic crm-secrets \
+  --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32) \
+  --from-literal=MISTRAL_API_KEY=<...> \
+  --from-literal=KATARINA_CRM_TOKEN=<...> \
+  ... (cf. helm/values/crm-mairie-agglo.yaml pour la liste complète)
+
+# crm-mairie-agglo-preprod : aussi le secret Telegram pour le runner
+kubectl -n crm-mairie-agglo-preprod create secret generic crm-telegram-secrets \
+  --from-literal=TELEGRAM_API_ID=<...> \
+  --from-literal=TELEGRAM_API_HASH=<...> \
+  --from-literal=TELEGRAM_FERNET_KEY=<une-NOUVELLE-clé-distincte-de-la-prod>
+```
+
+⚠ **Ne jamais réutiliser la `TELEGRAM_FERNET_KEY` prod en preprod** — les sessions sont chiffrées avec, et tu veux pouvoir tester preprod sans toucher aux comptes Telegram prod.
+
+#### 6. Créer les branches preprod
+
+Dans chaque app :
+
+```bash
+git checkout -b preprod
+git push -u origin preprod
+```
+
+À partir de là le workflow est :
+- Dev fait un PR vers `preprod` → CI tourne → merge → deploy preprod auto
+- QA OK → PR `preprod` → `main` → CI tourne → merge → deploy prod **avec approval manuelle**
+
+### Rollback
+
+```bash
+# Lister les revisions Helm
+helm -n entreprise history entreprise
+
+# Rollback à la revision précédente
+helm -n entreprise rollback entreprise
+
+# Ou explicitement à une revision N
+helm -n entreprise rollback entreprise 4
+```
+
+`--atomic` rollback automatiquement si `helm upgrade` échoue, donc en pratique ce rollback manuel n'est utile que pour annuler un deploy qui a réussi techniquement mais introduit un bug fonctionnel.
+
+### Troubleshooting CI/CD
+
+| Symptôme | Cause probable | Fix |
+|---|---|---|
+| `Cluster '...' introuvable` | Mauvais `K8S_CLUSTER_NAME` ou IAM sans accès | Vérifier `vars.SCW_DEFAULT_PROJECT_ID` et `secrets.SCW_*` |
+| `Namespace '<app>-preprod' absent` | Terraform preprod pas appliqué | `cd platform/terraform && make prod-apply` |
+| `Secret db-credentials manquant` | Idem | Idem |
+| Trivy fail HIGH/CRITICAL | CVE dans la base image ou une dépendance | Bumper la base ou patcher la lib ; en dernier recours mettre `exit-code: "0"` *temporairement* |
+| Helm upgrade timeout | Pod ne devient pas Ready (probe, crash, OOM) | `kubectl -n <ns> describe pod <pod>` + `kubectl logs` |
+| Smoke test KO mais pod up | DNS preprod pas propagé, cert TLS pas émis | Attendre 2 min ; `kubectl get certificate -n <ns>` |
+| `uses: satkaar/platform/...` 404 | Accès reusable workflow non autorisé | Repo platform → Settings → Actions → General → Access |

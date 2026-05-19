@@ -36,3 +36,15 @@ output "apps" {
     }
   }
 }
+
+output "apps_preprod" {
+  description = "Liste des apps preprod (mêmes apps que prod, suffixe _preprod sur DB et namespace -preprod)."
+  value = {
+    for k, v in local.apps_preprod : k => {
+      fqdn      = "preprod.${v.subdomain}.${var.ovh_zone}"
+      db_name   = v.db_name
+      db_user   = v.db_user
+      namespace = "${k}-preprod"
+    }
+  }
+}

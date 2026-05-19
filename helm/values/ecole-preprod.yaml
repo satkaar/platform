@@ -1,0 +1,25 @@
+nameOverride: ecole
+fullnameOverride: ecole
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/ecole
+  tag: preprod-latest
+
+replicaCount: 1
+
+ingress:
+  host: preprod.ecole.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.ecole.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi

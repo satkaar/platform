@@ -1,0 +1,42 @@
+nameOverride: crm-mairie-agglo
+fullnameOverride: crm-mairie-agglo
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-mairie-agglo
+  tag: preprod-latest
+
+# Le migrationJob ci-dessous prend en charge migrate + seeds → safe de scaler.
+# 1 réplica suffit en preprod.
+replicaCount: 1
+
+ingress:
+  host: preprod.crm.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.crm.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  # Active le gate dans entrypoint.sh : les pods web sautent migrate/seeds
+  # (gérés par le Job Helm ci-dessous, exécuté une fois par déploiement).
+  SKIP_DB_INIT: "true"
+
+migrationJob:
+  enabled: true
+  command: ["./entrypoint-migrate.sh"]
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+
+# Secrets applicatifs preprod. À provisionner manuellement :
+# kubectl -n crm-mairie-agglo-preprod create secret generic crm-secrets \
+#   --from-literal=DJANGO_SECRET_KEY=... --from-literal=MISTRAL_API_KEY=... ...
+envFromSecretRefs:
+  - name: crm-secrets
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi

@@ -1,0 +1,454 @@
+# Reusable deploy workflow appelé par chaque app Django.
+#
+# Pipeline :
+#   1. resolve-env  — détermine prod/preprod selon la branche
+#   2. build        — buildx multi-stage + push registry Scaleway
+#   3. scan         — Trivy sur l'image, fail si CRITICAL/HIGH
+#   4. deploy       — checkout platform repo, helm upgrade --atomic --wait
+#   5. smoke-test   — HTTP check sur l'URL de l'env
+#   6. deploy-runner (CRM uniquement) — release Helm secondaire pour le runner
+#                                       Telegram MTProto
+#
+# Secrets requis (côté caller app ou org-level) :
+#   - SCW_ACCESS_KEY              : Scaleway IAM access key
+#   - SCW_SECRET_KEY              : Scaleway IAM secret key
+#   - PLATFORM_REPO_TOKEN         : fine-grained PAT pour checkout `satkaar/platform`
+#                                   (Repository → Contents: read)
+#
+# Vars requises :
+#   - SCW_DEFAULT_PROJECT_ID
+#   - SCW_DEFAULT_ORGANIZATION_ID
+#
+# Environments GitHub :
+#   - `preprod` (sans approval) — auto-deploy depuis branche `preprod`
+#   - `production` (required reviewer) — deploy depuis branche `main`
+#
+# Repo platform : Settings → Actions → General → Access doit être configuré
+# en "Accessible from repositories owned by 'satkaar'" pour autoriser le reuse.
+
+name: Deploy to Kapsule (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        description: Nom de l'app (= nom du repo Helm values, = nom de l'image registry).
+        type: string
+        required: true
+      wsgi-module:
+        description: Build arg DJANGO_WSGI_MODULE (uniquement pour les 4 apps simples qui le déclarent). Laisser vide pour CRM/document-citoyen.
+        type: string
+        required: false
+        default: ""
+      prod-host:
+        description: FQDN de l'env prod (ex. entreprise.satkaar.io).
+        type: string
+        required: true
+      preprod-host:
+        description: FQDN de l'env preprod (ex. preprod.entreprise.satkaar.io).
+        type: string
+        required: true
+      smoke-path:
+        description: Path HTTP pour le smoke test (ex. /, /account/login/).
+        type: string
+        required: false
+        default: "/"
+      deploy-runner:
+        description: Si true, deploy aussi la release Helm <app>-runner (CRM uniquement).
+        type: boolean
+        required: false
+        default: false
+      platform-ref:
+        description: Ref git du repo `satkaar/platform` à checkout (chart + values).
+        type: string
+        required: false
+        default: "main"
+      registry:
+        description: Container Registry Scaleway.
+        type: string
+        required: false
+        default: "rg.fr-par.scw.cloud/mairie-agglo-platform"
+      cluster-name:
+        description: Nom du cluster Kapsule.
+        type: string
+        required: false
+        default: "mairie-agglo-prod"
+      scw-region:
+        description: Région Scaleway.
+        type: string
+        required: false
+        default: "fr-par"
+
+permissions:
+  contents: read
+
+# concurrency : ne pas tuer un deploy en cours (cancel-in-progress: false).
+# Le group inclut ref pour éviter qu'un push preprod + un push main se
+# blocent l'un l'autre.
+concurrency:
+  group: deploy-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-env:
+    name: Resolve target environment
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.env.outputs.name }}
+      namespace: ${{ steps.env.outputs.namespace }}
+      host: ${{ steps.env.outputs.host }}
+      gh-environment: ${{ steps.env.outputs.gh_environment }}
+    steps:
+      - id: env
+        env:
+          INPUT_ENV: ${{ github.event.inputs.environment }}
+          APP: ${{ inputs.app-name }}
+          PROD_HOST: ${{ inputs.prod-host }}
+          PREPROD_HOST: ${{ inputs.preprod-host }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${INPUT_ENV:-}" ]; then
+            ENV="$INPUT_ENV"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ENV="prod"
+          elif [ "${{ github.ref }}" = "refs/heads/preprod" ]; then
+            ENV="preprod"
+          else
+            echo "::error::Branche ${{ github.ref }} non supportée pour deploy."
+            exit 1
+          fi
+          if [ "$ENV" = "prod" ]; then
+            NS="$APP"
+            HOST="$PROD_HOST"
+            GH_ENV="production"
+          else
+            NS="$APP-preprod"
+            HOST="$PREPROD_HOST"
+            GH_ENV="preprod"
+          fi
+          {
+            echo "name=$ENV"
+            echo "namespace=$NS"
+            echo "host=$HOST"
+            echo "gh_environment=$GH_ENV"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::env=$ENV namespace=$NS host=$HOST gh_env=$GH_ENV"
+
+  build:
+    name: Build & push image
+    needs: resolve-env
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+      image-ref: ${{ steps.tag.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Scaleway credentials present
+        run: |
+          : "${{ secrets.SCW_SECRET_KEY }}"
+          [ -n "${{ secrets.SCW_SECRET_KEY }}" ] || { echo "::error::SCW_SECRET_KEY missing"; exit 1; }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Scaleway Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: rg.${{ inputs.scw-region }}.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+
+      - name: Compute image tag
+        id: tag
+        env:
+          ENV_NAME: ${{ needs.resolve-env.outputs.name }}
+          APP: ${{ inputs.app-name }}
+          REG: ${{ inputs.registry }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          TAG="${ENV_NAME}-${SHORT_SHA}"
+          {
+            echo "tag=$TAG"
+            echo "ref=$REG/$APP:$TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build & push (linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          # Scaleway Container Registry refuse les manifestes OCI avec
+          # attestations (HTTP 400 sur HEAD). Désactiver provenance + sbom.
+          provenance: false
+          sbom: false
+          build-args: |
+            DJANGO_WSGI_MODULE=${{ inputs.wsgi-module }}
+          tags: |
+            ${{ inputs.registry }}/${{ inputs.app-name }}:${{ steps.tag.outputs.tag }}
+            ${{ inputs.registry }}/${{ inputs.app-name }}:${{ needs.resolve-env.outputs.name }}-latest
+          cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.app-name }}:buildcache-${{ needs.resolve-env.outputs.name }}
+          cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.app-name }}:buildcache-${{ needs.resolve-env.outputs.name }},mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.ref.name=${{ github.ref_name }}
+
+  scan:
+    name: Trivy image scan
+    needs: [resolve-env, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Login to Scaleway Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: rg.${{ inputs.scw-region }}.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build.outputs.image-ref }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          # Bloque le pipeline sur CVE CRITICAL/HIGH fixables.
+          exit-code: "1"
+          vuln-type: os,library
+
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-${{ inputs.app-name }}-${{ needs.resolve-env.outputs.name }}
+
+  deploy:
+    name: Helm upgrade (${{ needs.resolve-env.outputs.name }})
+    needs: [resolve-env, build, scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ needs.resolve-env.outputs.gh-environment }}
+      url: https://${{ needs.resolve-env.outputs.host }}
+    env:
+      ENV_NAME: ${{ needs.resolve-env.outputs.name }}
+      NAMESPACE: ${{ needs.resolve-env.outputs.namespace }}
+      HOST: ${{ needs.resolve-env.outputs.host }}
+      IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+      APP_NAME: ${{ inputs.app-name }}
+      REGISTRY: ${{ inputs.registry }}
+    steps:
+      - name: Checkout platform repo (Helm chart + values)
+        uses: actions/checkout@v4
+        with:
+          repository: satkaar/platform
+          ref: ${{ inputs.platform-ref }}
+          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          path: platform
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Install Scaleway CLI
+        run: |
+          SCW_VERSION="2.52.0"
+          curl -sSL -o /tmp/scw \
+            "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scaleway-cli_${SCW_VERSION}_linux_amd64"
+          chmod +x /tmp/scw
+          sudo mv /tmp/scw /usr/local/bin/scw
+          scw version
+
+      - name: Fetch kubeconfig from Scaleway
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_DEFAULT_PROJECT_ID }}
+          SCW_DEFAULT_ORGANIZATION_ID: ${{ vars.SCW_DEFAULT_ORGANIZATION_ID }}
+          SCW_DEFAULT_REGION: ${{ inputs.scw-region }}
+          CLUSTER_NAME: ${{ inputs.cluster-name }}
+        run: |
+          set -euo pipefail
+          CLUSTER_ID=$(scw k8s cluster list region=${SCW_DEFAULT_REGION} -o json \
+            | jq -r --arg n "$CLUSTER_NAME" '.[] | select(.name == $n) | .id')
+          if [ -z "$CLUSTER_ID" ] || [ "$CLUSTER_ID" = "null" ]; then
+            echo "::error::Cluster '$CLUSTER_NAME' introuvable dans $SCW_DEFAULT_REGION"
+            exit 1
+          fi
+          mkdir -p "$HOME/.kube"
+          scw k8s kubeconfig get "$CLUSTER_ID" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          kubectl get nodes -o wide
+
+      - name: Verify cluster prerequisites
+        run: |
+          set -euo pipefail
+          if ! kubectl get namespace "$NAMESPACE" > /dev/null 2>&1; then
+            echo "::error::Namespace '$NAMESPACE' absent. Lancer 'make prod-apply' dans platform/terraform avant le 1er deploy $ENV_NAME."
+            exit 1
+          fi
+          if ! kubectl -n "$NAMESPACE" get secret db-credentials > /dev/null 2>&1; then
+            echo "::error::Secret 'db-credentials' manquant dans $NAMESPACE. Provisionné par Terraform — lancer 'make prod-apply'."
+            exit 1
+          fi
+
+      - name: Helm upgrade
+        run: |
+          set -euo pipefail
+          VALUES="platform/helm/values/${APP_NAME}.yaml"
+          if [ "$ENV_NAME" = "preprod" ]; then
+            VALUES="platform/helm/values/${APP_NAME}-preprod.yaml"
+          fi
+          if [ ! -f "$VALUES" ]; then
+            echo "::error::Values file $VALUES introuvable dans platform repo (ref=${{ inputs.platform-ref }})"
+            exit 1
+          fi
+          helm upgrade --install "$APP_NAME" \
+            platform/helm/django-app \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES" \
+            --set image.tag="$IMAGE_TAG" \
+            --atomic \
+            --wait \
+            --timeout 10m
+
+      - name: Rollout status
+        if: always()
+        run: |
+          kubectl -n "$NAMESPACE" get pods,svc,ingress -l app.kubernetes.io/instance="$APP_NAME" -o wide || true
+          echo "---"
+          kubectl -n "$NAMESPACE" describe deployment "$APP_NAME" | tail -50 || true
+
+      - name: Smoke test
+        env:
+          SMOKE_PATH: ${{ inputs.smoke-path }}
+        run: |
+          set -euo pipefail
+          URL="https://${HOST}${SMOKE_PATH}"
+          echo "🏥 Health check $URL"
+          for i in $(seq 1 18); do
+            CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 30 "$URL" || echo 000)
+            case "$CODE" in
+              200|301|302|401|403)
+                echo "✅ HTTP $CODE — deploy OK"
+                exit 0
+                ;;
+            esac
+            echo "  attempt $i/18 → HTTP $CODE, retry 10s…"
+            sleep 10
+          done
+          echo "::error::Smoke test KO après 3 min (URL=$URL)"
+          exit 1
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Déploiement $ENV_NAME"
+            echo
+            echo "| Champ | Valeur |"
+            echo "| --- | --- |"
+            echo "| App | \`$APP_NAME\` |"
+            echo "| Env | \`$ENV_NAME\` |"
+            echo "| Namespace | \`$NAMESPACE\` |"
+            echo "| Image | \`$REGISTRY/$APP_NAME:$IMAGE_TAG\` |"
+            echo "| Host | https://$HOST |"
+            echo "| Commit | [\`${GITHUB_SHA::12}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-runner:
+    name: Helm upgrade runner (${{ needs.resolve-env.outputs.name }})
+    needs: [resolve-env, build, scan, deploy]
+    if: ${{ inputs.deploy-runner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.resolve-env.outputs.gh-environment }}
+    env:
+      ENV_NAME: ${{ needs.resolve-env.outputs.name }}
+      NAMESPACE: ${{ needs.resolve-env.outputs.namespace }}
+      IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+      APP_NAME: ${{ inputs.app-name }}
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          repository: satkaar/platform
+          ref: ${{ inputs.platform-ref }}
+          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          path: platform
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Install Scaleway CLI + kubeconfig
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_DEFAULT_PROJECT_ID }}
+          SCW_DEFAULT_ORGANIZATION_ID: ${{ vars.SCW_DEFAULT_ORGANIZATION_ID }}
+          SCW_DEFAULT_REGION: ${{ inputs.scw-region }}
+          CLUSTER_NAME: ${{ inputs.cluster-name }}
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/scw \
+            "https://github.com/scaleway/scaleway-cli/releases/download/v2.52.0/scaleway-cli_2.52.0_linux_amd64"
+          chmod +x /tmp/scw && sudo mv /tmp/scw /usr/local/bin/scw
+          CLUSTER_ID=$(scw k8s cluster list region=${SCW_DEFAULT_REGION} -o json \
+            | jq -r --arg n "$CLUSTER_NAME" '.[] | select(.name == $n) | .id')
+          mkdir -p "$HOME/.kube"
+          scw k8s kubeconfig get "$CLUSTER_ID" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Verify telegram secrets present
+        run: |
+          if ! kubectl -n "$NAMESPACE" get secret crm-telegram-secrets > /dev/null 2>&1; then
+            echo "::warning::Secret crm-telegram-secrets manquant dans $NAMESPACE — le runner crashera au boot. Le créer avec TELEGRAM_API_ID/HASH/FERNET_KEY."
+          fi
+
+      - name: Helm upgrade runner
+        run: |
+          set -euo pipefail
+          RUNNER_RELEASE="${APP_NAME}-runner"
+          VALUES="platform/helm/values/${RUNNER_RELEASE}.yaml"
+          if [ "$ENV_NAME" = "preprod" ]; then
+            VALUES="platform/helm/values/${RUNNER_RELEASE}-preprod.yaml"
+          fi
+          if [ ! -f "$VALUES" ]; then
+            echo "::error::Values file $VALUES introuvable"
+            exit 1
+          fi
+          helm upgrade --install "$RUNNER_RELEASE" \
+            platform/helm/django-app \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES" \
+            --set image.tag="$IMAGE_TAG" \
+            --atomic \
+            --wait \
+            --timeout 5m
+
+      - name: Runner status
+        if: always()
+        run: |
+          kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="${APP_NAME}-runner" -o wide || true

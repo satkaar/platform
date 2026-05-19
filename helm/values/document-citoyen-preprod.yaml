@@ -1,0 +1,43 @@
+nameOverride: document-citoyen
+fullnameOverride: document-citoyen
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/document-citoyen
+  tag: preprod-latest
+
+replicaCount: 1
+
+ingress:
+  host: preprod.documents.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.documents.satkaar.io"
+  CSRF_TRUSTED_ORIGINS: "https://preprod.documents.satkaar.io"
+  PUBLIC_BASE_URL: "https://preprod.documents.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  DATABASE_SSL: "true"
+  # Webhook CRM via DNS interne K8s — pointe sur le CRM preprod (même namespace
+  # convention : `<app>-preprod`).
+  KATARINA_CRM_API_URL: "http://crm-mairie-agglo.crm-mairie-agglo-preprod.svc.cluster.local"
+
+# Secrets applicatifs preprod (token CRM preprod, bucket S3 preprod, etc).
+# kubectl -n document-citoyen-preprod create secret generic document-citoyen-secrets \
+#   --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32) \
+#   --from-literal=KATARINA_CRM_TOKEN=xxx \
+#   --from-literal=CRM_WEBHOOK_SECRET=xxx \
+#   --from-literal=AWS_ACCESS_KEY_ID=xxx \
+#   --from-literal=AWS_SECRET_ACCESS_KEY=xxx \
+#   --from-literal=AWS_STORAGE_BUCKET_NAME=katarina-media-preprod \
+#   ...
+envFromSecretRefs:
+  - name: document-citoyen-secrets
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

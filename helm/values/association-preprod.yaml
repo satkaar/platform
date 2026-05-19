@@ -1,0 +1,25 @@
+nameOverride: association
+fullnameOverride: association
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/association
+  tag: preprod-latest
+
+replicaCount: 1
+
+ingress:
+  host: preprod.association.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.association.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi

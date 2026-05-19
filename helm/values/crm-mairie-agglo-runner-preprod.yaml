@@ -1,0 +1,56 @@
+# Runner Telegram MTProto preprod — 2ème release Helm dans le namespace
+# `crm-mairie-agglo-preprod` (pour partager les secrets crm-secrets +
+# crm-telegram-secrets de ce ns).
+#
+# Déploiement :
+#   ./platform/scripts/helm-deploy.sh crm-mairie-agglo-runner <tag> \
+#       --namespace crm-mairie-agglo-preprod
+
+nameOverride: crm-runner
+fullnameOverride: crm-runner
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-mairie-agglo
+  tag: preprod-latest
+
+# Singleton obligatoire (sessions MTProto ne supportent pas la concurrence).
+replicaCount: 1
+
+# Pas de trafic HTTP entrant : daemon en arrière-plan + healthz interne kubelet.
+service:
+  enabled: false
+
+ingress:
+  enabled: false
+
+env:
+  RUN_MODE: "runner"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "*"
+  PORT: "8080"
+
+envFromSecretRefs:
+  - name: crm-secrets
+  - name: crm-telegram-secrets
+
+probes:
+  liveness:
+    enabled: true
+    tcp: false
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    enabled: true
+    tcp: false
+    path: /readyz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
