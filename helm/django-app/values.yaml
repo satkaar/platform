@@ -1,0 +1,95 @@
+# Valeurs par défaut du chart django-app. Surchargées par helm/values/<app>.yaml.
+
+# Identité de l'app (utilisée pour les noms de ressources K8s).
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/REMPLACER
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Pull secrets (vide par défaut). Kapsule peut pull depuis le Container Registry
+# Scaleway dans le même projet sans creds. Si le registry est ailleurs ou privé
+# cross-projet, créer un secret docker-registry et l'ajouter ici :
+#   imagePullSecrets:
+#     - name: scw-registry-secret
+imagePullSecrets: []
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+service:
+  enabled: true   # mettre false pour un Deployment sans trafic entrant (runner, worker)
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: REMPLACER.satkaar.io
+  tls:
+    enabled: true
+    issuer: letsencrypt-prod
+  # Annotations WebSocket-friendly (timeout long). Sans effet si l'app n'en a pas.
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# Variables d'environnement non sensibles, exposées en ConfigMap.
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "REMPLACER.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+
+# Secrets référencés depuis des Secret K8s existants (provisionnés par Terraform
+# ou kubectl manuellement). Format : { ENV_VAR_NAME: { secretName, key } }
+envFromSecrets:
+  DATABASE_URL:
+    secretName: db-credentials
+    key: DATABASE_URL
+
+# Secret K8s additionnel à monter en envFrom (toutes ses clés deviennent des env vars).
+# Laisser vide si pas de secret applicatif.
+envFromSecretRefs: []
+# Exemple :
+# envFromSecretRefs:
+#   - name: app-secrets
+
+probes:
+  liveness:
+    enabled: true
+    path: /
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    enabled: true
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# Job Helm pre-install/pre-upgrade pour migrations + seeds idempotents.
+# Quand activé : les pods web ne doivent PLUS faire migrate/seed eux-mêmes
+# (gate via env SKIP_DB_INIT=true côté entrypoint applicatif). Permet de scaler
+# le Deployment à >1 réplica sans collisions de seed concurrents.
+migrationJob:
+  enabled: false
+  command: ["./entrypoint-migrate.sh"]
+  backoffLimit: 1
+  activeDeadlineSeconds: 600  # 10 min max
+  resources:
+    requests:
+      cpu: 200m
+      memory: 384Mi
+    limits:
+      cpu: 1000m
+      memory: 768Mi

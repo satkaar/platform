@@ -1,0 +1,15 @@
+nameOverride: association
+fullnameOverride: association
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/association
+  tag: latest
+
+ingress:
+  host: association.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "association.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"

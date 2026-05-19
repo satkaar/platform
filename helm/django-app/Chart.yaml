@@ -1,0 +1,6 @@
+apiVersion: v2
+name: django-app
+description: Chart générique pour une app Django déployée sur Kapsule
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

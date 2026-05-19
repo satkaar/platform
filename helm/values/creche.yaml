@@ -1,0 +1,15 @@
+nameOverride: creche
+fullnameOverride: creche
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/creche
+  tag: latest
+
+ingress:
+  host: creche.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "creche.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"

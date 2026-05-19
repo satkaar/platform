@@ -1,0 +1,62 @@
+# Runner Telegram MTProto du CRM — 2ème release Helm sur le MÊME chart
+# django-app et la MÊME image que le web. Le dispatch se fait via RUN_MODE=runner
+# géré dans entrypoint.sh (qui exec entrypoint-runner.sh).
+#
+# Déploiement (dans le namespace du CRM web pour partager les secrets) :
+#   ./platform/scripts/helm-deploy.sh crm-mairie-agglo-runner v1.0.0 \
+#       --namespace crm-mairie-agglo
+
+nameOverride: crm-runner
+fullnameOverride: crm-runner
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-mairie-agglo
+  tag: latest
+
+# Singleton obligatoire : sessions MTProto ne supportent pas la concurrence.
+# Telegram invalide les sessions ouvertes en parallèle sur la même clé d'auth.
+replicaCount: 1
+
+# Pas de trafic HTTP entrant : daemon en arrière-plan + healthz interne kubelet.
+service:
+  enabled: false
+
+ingress:
+  enabled: false
+
+env:
+  # Dispatch entrypoint.sh → entrypoint-runner.sh
+  RUN_MODE: "runner"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "*"
+  PORT: "8080"
+  # Pas de mail, pas de Mistral, pas de Katarina pour le runner — il ne sert
+  # que la stack MTProto + healthcheck HTTP.
+
+# Réutilise les secrets du CRM web (mêmes credentials Django, Mistral inutile
+# mais inoffensif). Le secret crm-telegram-secrets contient les 3 vars MTProto.
+envFromSecretRefs:
+  - name: crm-secrets
+  - name: crm-telegram-secrets
+
+# Probes sur les endpoints du mini HTTP server intégré au runner
+# (cf. _start_health_server dans telegram/management/commands/telegram_runner.py)
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 800m
+    memory: 768Mi

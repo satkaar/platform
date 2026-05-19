@@ -1,0 +1,23 @@
+scaleway_organization_id = "REMPLACER-PAR-VOTRE-ORG-ID"
+project_id               = "REMPLACER-PAR-OUTPUT-DE-SHARED"
+
+scaleway_region = "fr-par"
+scaleway_zone   = "fr-par-1"
+
+ovh_zone     = "satkaar.io"
+cluster_name = "mairie-agglo-prod"
+
+kubernetes_version = "1.31.2"
+node_type          = "PRO2-XXS"
+pool_size          = 3
+pool_min_size      = 3
+pool_max_size      = 5
+
+postgres_node_type      = "DB-DEV-S"
+postgres_volume_size_gb = 20
+
+letsencrypt_email = "damien.marque.dm@gmail.com"
+
+# Mettre à true UNIQUEMENT au second apply, une fois que le LoadBalancer
+# Ingress a obtenu une IP publique (visible avec : kubectl get svc -n ingress-nginx).
+enable_dns_records = false

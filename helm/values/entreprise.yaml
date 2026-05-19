@@ -1,0 +1,15 @@
+nameOverride: entreprise
+fullnameOverride: entreprise
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/entreprise
+  tag: latest
+
+ingress:
+  host: entreprise.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "entreprise.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"

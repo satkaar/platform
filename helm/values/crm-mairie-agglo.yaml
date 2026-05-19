@@ -1,0 +1,46 @@
+nameOverride: crm-mairie-agglo
+fullnameOverride: crm-mairie-agglo
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-mairie-agglo
+  tag: latest
+
+# Le migrationJob ci-dessous prend en charge migrate + seeds → safe de scaler.
+replicaCount: 2
+
+ingress:
+  host: crm.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "crm.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  # Active le gate dans entrypoint.sh : les pods web sautent migrate/seeds
+  # (gérés par le Job Helm ci-dessous, exécuté une fois par déploiement).
+  SKIP_DB_INIT: "true"
+
+migrationJob:
+  enabled: true
+  command: ["./entrypoint-migrate.sh"]
+  backoffLimit: 1
+  # 15 min : seed_fiches_postes peut prendre du temps sur première exécution.
+  activeDeadlineSeconds: 900
+
+# Secrets applicatifs : DJANGO_SECRET_KEY, MISTRAL_API_KEY, KATARINA_CRM_TOKEN,
+# CRM_WEBHOOK_SECRET, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, S3 creds, etc.
+# kubectl -n crm-mairie-agglo create secret generic crm-secrets \
+#   --from-literal=DJANGO_SECRET_KEY=... --from-literal=MISTRAL_API_KEY=...
+envFromSecretRefs:
+  - name: crm-secrets
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 512Mi
+  limits:
+    cpu: 1500m
+    memory: 1Gi
+
+# NOTE : le runner Telegram MTProto est un déploiement séparé (RUN_MODE=runner),
+# à provisionner via un second helm release ou un manifest dédié. Polish demain.

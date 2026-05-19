@@ -1,0 +1,15 @@
+nameOverride: ecole
+fullnameOverride: ecole
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/ecole
+  tag: latest
+
+ingress:
+  host: ecole.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "ecole.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"

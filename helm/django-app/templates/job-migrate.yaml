@@ -1,0 +1,55 @@
+{{- if .Values.migrationJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "django-app.fullname" . }}-migrate
+  labels:
+    {{- include "django-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Exécuté AVANT le rolling update du Deployment (pre-install ET pre-upgrade).
+    helm.sh/hook: pre-install,pre-upgrade
+    # Poids négatif pour passer avant les autres hooks éventuels.
+    helm.sh/hook-weight: "-5"
+    # Supprime le Job précédent au prochain déploiement (évite name collision).
+    # On NE met pas "hook-succeeded" volontairement : on garde le Job entre 2
+    # déploiements pour pouvoir consulter les logs (kubectl logs job/...-migrate).
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "django-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            {{- toYaml .Values.migrationJob.command | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "django-app.fullname" . }}-env
+            {{- range .Values.envFromSecretRefs }}
+            - secretRef:
+                name: {{ .name }}
+            {{- end }}
+          env:
+            {{- range $key, $ref := .Values.envFromSecrets }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ref.secretName }}
+                  key: {{ $ref.key }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrationJob.resources | nindent 12 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

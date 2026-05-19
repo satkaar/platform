@@ -1,0 +1,43 @@
+nameOverride: document-citoyen
+fullnameOverride: document-citoyen
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/document-citoyen
+  tag: latest
+
+ingress:
+  host: documents.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "documents.satkaar.io"
+  CSRF_TRUSTED_ORIGINS: "https://documents.satkaar.io"
+  PUBLIC_BASE_URL: "https://documents.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  DATABASE_SSL: "true"
+  # Webhook CRM via DNS interne K8s — pas d'aller-retour Internet.
+  KATARINA_CRM_API_URL: "http://crm-mairie-agglo.crm-mairie-agglo.svc.cluster.local"
+
+# Secrets applicatifs (KATARINA_CRM_TOKEN, CRM_WEBHOOK_SECRET, S3 creds,
+# SMTP creds…). Créer manuellement :
+#   kubectl -n document-citoyen create secret generic document-citoyen-secrets \
+#     --from-literal=KATARINA_CRM_TOKEN=xxx \
+#     --from-literal=CRM_WEBHOOK_SECRET=xxx \
+#     --from-literal=DJANGO_SECRET_KEY=xxx \
+#     --from-literal=AWS_ACCESS_KEY_ID=xxx \
+#     --from-literal=AWS_SECRET_ACCESS_KEY=xxx \
+#     --from-literal=AWS_STORAGE_BUCKET_NAME=katarina-media-prod \
+#     --from-literal=EMAIL_HOST=ssl0.ovh.net \
+#     --from-literal=EMAIL_USERNAME=xxx \
+#     --from-literal=EMAIL_PASSWORD=xxx
+envFromSecretRefs:
+  - name: document-citoyen-secrets
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi

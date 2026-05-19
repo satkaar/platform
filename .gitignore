@@ -1,0 +1,30 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Variables sensibles (orga id, mots de passe, etc.)
+terraform.tfvars
+*.auto.tfvars
+
+# Helm
+charts/
+*.tgz
+
+# Kubeconfig copies locales
+*.kubeconfig
+kubeconfig*
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs et tmp
+*.log
+/tmp/
