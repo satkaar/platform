@@ -9,15 +9,12 @@ resource "scaleway_account_project" "platform" {
   description = "Plateforme mutualisée Kapsule pour les 6 applis mairie-agglo (Django)"
 }
 
-# Bucket pour le state distant. Volontairement dans le projet par défaut de
-# l'orga : la clé IAM utilisée localement est scopée au projet par défaut.
-resource "scaleway_object_bucket" "tfstate" {
-  name   = var.tfstate_bucket_name
-  region = var.scaleway_region
-
-  versioning {
-    enabled = true
-  }
+# Bucket pour le state Terraform : créé MANUELLEMENT en amont via scw CLI
+# (chicken-and-egg : backend S3 référence ce bucket dès terraform init).
+#   scw object bucket create name=mairie-agglo-platform-tfstate region=fr-par enable-versioning=true
+# Volontairement dans le projet par défaut de l'orga : la clé IAM locale y a accès.
+data "scaleway_object_bucket" "tfstate" {
+  name = var.tfstate_bucket_name
 }
 
 resource "scaleway_registry_namespace" "platform" {

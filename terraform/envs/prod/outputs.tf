@@ -13,11 +13,11 @@ output "kubeconfig" {
 }
 
 output "postgres_endpoint_ip" {
-  value = try(scaleway_rdb_instance.shared.load_balancer[0].ip, "")
+  value = scaleway_rdb_instance.shared.endpoint_ip
 }
 
 output "postgres_endpoint_port" {
-  value = try(scaleway_rdb_instance.shared.load_balancer[0].port, 5432)
+  value = scaleway_rdb_instance.shared.endpoint_port
 }
 
 output "ingress_lb_ip" {

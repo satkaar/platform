@@ -315,8 +315,8 @@ resource "kubernetes_secret" "db" {
       "postgres://%s:%s@%s:%d/%s?sslmode=require",
       scaleway_rdb_user.app[each.key].name,
       urlencode(random_password.db_app[each.key].result),
-      scaleway_rdb_instance.shared.load_balancer[0].ip,
-      scaleway_rdb_instance.shared.load_balancer[0].port,
+      scaleway_rdb_instance.shared.endpoint_ip,
+      scaleway_rdb_instance.shared.endpoint_port,
       scaleway_rdb_database.app[each.key].name,
     )
   }

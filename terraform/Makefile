@@ -29,13 +29,13 @@ shared-plan:
 	cd shared && terraform plan
 
 shared-apply:
-	cd shared && terraform apply
+	cd shared && terraform apply -auto-approve
 
 prod-init:
 	cd envs/prod && terraform init
 
 prod-bootstrap:
-	cd envs/prod && terraform apply \
+	cd envs/prod && terraform apply -auto-approve \
 		-target=scaleway_vpc.this \
 		-target=scaleway_vpc_private_network.this \
 		-target=scaleway_k8s_cluster.this \
@@ -46,10 +46,10 @@ prod-plan:
 	cd envs/prod && terraform plan
 
 prod-apply:
-	cd envs/prod && terraform apply
+	cd envs/prod && terraform apply -auto-approve
 
 prod-apply-dns:
-	cd envs/prod && terraform apply -var enable_dns_records=true
+	cd envs/prod && terraform apply -auto-approve -var enable_dns_records=true
 
 kubeconfig:
 	@cd envs/prod && terraform output -raw kubeconfig
@@ -62,8 +62,7 @@ lb-ip:
 
 apply-issuer:
 	@TMPKUBE=$$(mktemp) && \
-	cd envs/prod && terraform output -raw kubeconfig > $$TMPKUBE && \
-	cd .. && \
+	(cd envs/prod && terraform output -raw kubeconfig) > $$TMPKUBE && \
 	sed "s/REMPLACER_EMAIL/$(LETSENCRYPT_EMAIL)/" ../scripts/cert-manager-issuer.yaml | \
 	kubectl --kubeconfig=$$TMPKUBE apply -f - && \
 	rm -f $$TMPKUBE

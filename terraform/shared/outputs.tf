@@ -9,5 +9,5 @@ output "registry_endpoint" {
 }
 
 output "tfstate_bucket" {
-  value = scaleway_object_bucket.tfstate.name
+  value = data.scaleway_object_bucket.tfstate.name
 }
