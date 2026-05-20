@@ -17,6 +17,12 @@ image:
 # Telegram invalide les sessions ouvertes en parallèle sur la même clé d'auth.
 replicaCount: 1
 
+# Recreate (pas RollingUpdate) : K8s termine le runner courant AVANT de démarrer
+# le nouveau. Sinon, 2 runners coexistent ~30s pendant un rolling et le nouveau
+# invaliderait la session MTProto de l'ancien (ban Telegram potentiel).
+strategy:
+  type: Recreate
+
 # Pas de trafic HTTP entrant : daemon en arrière-plan + healthz interne kubelet.
 service:
   enabled: false

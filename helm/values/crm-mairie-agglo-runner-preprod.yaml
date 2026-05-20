@@ -16,6 +16,11 @@ image:
 # Singleton obligatoire (sessions MTProto ne supportent pas la concurrence).
 replicaCount: 1
 
+# Recreate (cf. crm-mairie-agglo-runner.yaml) — évite le chevauchement de
+# 2 runners pendant un rolling update.
+strategy:
+  type: Recreate
+
 # Pas de trafic HTTP entrant : daemon en arrière-plan + healthz interne kubelet.
 service:
   enabled: false
