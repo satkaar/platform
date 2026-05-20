@@ -12,8 +12,6 @@
 # Secrets requis (côté caller app ou org-level) :
 #   - SCW_ACCESS_KEY              : Scaleway IAM access key
 #   - SCW_SECRET_KEY              : Scaleway IAM secret key
-#   - PLATFORM_REPO_TOKEN         : fine-grained PAT pour checkout `satkaar/platform`
-#                                   (Repository → Contents: read)
 #
 # Vars requises :
 #   - SCW_DEFAULT_PROJECT_ID
@@ -21,10 +19,12 @@
 #
 # Environments GitHub :
 #   - `preprod` (sans approval) — auto-deploy depuis branche `preprod`
-#   - `production` (required reviewer) — deploy depuis branche `main`
+#   - `production` (required reviewer si plan Team+) — deploy depuis `main`
 #
-# Repo platform : Settings → Actions → General → Access doit être configuré
-# en "Accessible from repositories owned by 'satkaar'" pour autoriser le reuse.
+# Repo platform doit être public OU accessible cross-repo (`access_level:
+# organization`) pour que `actions/checkout` puisse cloner satkaar/platform
+# depuis les workflows des 6 apps. On utilise github.token pour ce checkout :
+# en repo public ça suffit, en privé ça exige public ou un PAT dédié.
 
 name: Deploy to Kapsule (reusable)
 
@@ -267,7 +267,7 @@ jobs:
         with:
           repository: satkaar/platform
           ref: ${{ inputs.platform-ref }}
-          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          token: ${{ github.token }}
           path: platform
 
       - name: Setup Helm
@@ -279,6 +279,7 @@ jobs:
         uses: azure/setup-kubectl@v4
         with:
           version: v1.31.0
+          token: ${{ github.token }}
 
       - name: Install Scaleway CLI
         run: |
@@ -405,7 +406,7 @@ jobs:
         with:
           repository: satkaar/platform
           ref: ${{ inputs.platform-ref }}
-          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          token: ${{ github.token }}
           path: platform
 
       - name: Setup Helm
@@ -417,6 +418,7 @@ jobs:
         uses: azure/setup-kubectl@v4
         with:
           version: v1.31.0
+          token: ${{ github.token }}
 
       - name: Install Scaleway CLI + kubeconfig
         env:
