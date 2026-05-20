@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # Migre les données SQLite d'une app vers la base Postgres mutualisée.
-# Le DATABASE_URL Postgres est récupéré depuis le secret K8s créé par Terraform.
+#
+# Stratégie :
+# 1. dumpdata depuis SQLite (en local, venv .venv de l'app — juste Django requis)
+# 2. copie le dump dans le pod web via `kubectl exec -i`
+# 3. `flush --no-input` côté pod pour vider la Postgres (les seeds entrypoint
+#    sont remplacés par le contenu SQLite — décision utilisateur)
+# 4. `loaddata` côté pod (psycopg + dj-database-url déjà installés dans l'image)
 #
 # Usage : ./migrate-sqlite-to-postgres.sh <app>
-# Prérequis : Python venv local de l'app avec deps installées + KUBECONFIG défini.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: $0 <app>"
     echo "Apps : entreprise, ecole, creche, association"
-    echo "  (CRM et document-citoyen migrent leur Postgres existante via pg_dump séparément)"
+    echo "  (CRM et document-citoyen migrent via pg_dump séparément)"
     exit 1
 fi
 
@@ -17,6 +22,7 @@ APP="$1"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_DIR="$ROOT/$APP"
 DUMP_FILE="/tmp/dump-$APP-$(date +%Y%m%d-%H%M%S).json"
+VENV_PY="$APP_DIR/.venv/bin/python"
 
 if [ ! -d "$APP_DIR" ]; then
     echo "✗ App directory '$APP_DIR' introuvable."
@@ -28,40 +34,47 @@ if [ ! -f "$APP_DIR/db.sqlite3" ]; then
     exit 0
 fi
 
-# Récupère le DATABASE_URL depuis le secret K8s
-echo "==> Récupération du DATABASE_URL depuis K8s (namespace: $APP)..."
-DATABASE_URL=$(kubectl -n "$APP" get secret db-credentials \
-    -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
-
-if [ -z "$DATABASE_URL" ]; then
-    echo "✗ Secret db-credentials introuvable ou vide dans le namespace $APP."
-    echo "  Vérifier que terraform apply a été exécuté."
+if [ ! -x "$VENV_PY" ]; then
+    echo "✗ Venv Python introuvable : $VENV_PY"
     exit 1
 fi
 
-cd "$APP_DIR"
+# Récupère un pod web Running pour exécuter flush + loaddata
+POD=$(kubectl -n "$APP" get pod \
+    -l "app.kubernetes.io/name=$APP" \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}')
 
-# 1. Dump SQLite (sans DATABASE_URL → utilise SQLite local)
-echo "==> Dump des données SQLite → $DUMP_FILE"
-unset DATABASE_URL
-python manage.py dumpdata \
+if [ -z "$POD" ]; then
+    echo "✗ Aucun pod Running pour app=$APP dans namespace $APP."
+    exit 1
+fi
+echo "==> Pod cible : $POD"
+
+# 1. Dump SQLite en local (venv n'a besoin que de Django)
+cd "$APP_DIR"
+echo "==> Dump SQLite → $DUMP_FILE"
+unset DATABASE_URL  # force la default SQLite
+"$VENV_PY" manage.py dumpdata \
     --natural-foreign --natural-primary \
-    --exclude contenttypes --exclude auth.permission \
+    --exclude contenttypes \
+    --exclude auth.permission \
+    --exclude admin.logentry \
+    --exclude sessions.session \
     --indent 2 \
     > "$DUMP_FILE"
 
 DUMP_SIZE=$(wc -c < "$DUMP_FILE")
 echo "   $DUMP_FILE ($DUMP_SIZE bytes)"
 
-# 2. Re-récupère le DATABASE_URL et applique les migrations + load des données
-export DATABASE_URL=$(kubectl -n "$APP" get secret db-credentials \
-    -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+# 2. Flush Postgres dans le pod (vide TOUTES les tables sauf django_migrations)
+echo "==> Flush Postgres côté pod..."
+kubectl -n "$APP" exec "$POD" -- python manage.py flush --no-input
 
-echo "==> Migrations Django sur la Postgres mutualisée..."
-python manage.py migrate --noinput
-
+# 3. Loaddata : on pipe le dump local dans le pod (pas de kubectl cp qui exige tar)
 echo "==> Loaddata depuis $DUMP_FILE..."
-python manage.py loaddata "$DUMP_FILE"
+kubectl -n "$APP" exec -i "$POD" -- sh -c 'cat > /tmp/dump.json' < "$DUMP_FILE"
+kubectl -n "$APP" exec "$POD" -- python manage.py loaddata /tmp/dump.json
+kubectl -n "$APP" exec "$POD" -- rm -f /tmp/dump.json
 
 echo "✓ Migration $APP : SQLite → Postgres OK"
-echo "  Vérifier en se connectant à l'admin Django de la version K8s."

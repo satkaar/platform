@@ -136,7 +136,7 @@ resource "random_password" "db_admin" {
 # (SQLite → Postgres). À durcir plus tard : passer en private_network seul
 # une fois la migration faite, et utiliser un peering avec le VPC Kapsule.
 resource "scaleway_rdb_instance" "shared" {
-  name                      = "platform-${local.env}"
+  name                      = "ccpfml-db"
   project_id                = var.project_id
   region                    = var.scaleway_region
   node_type                 = var.postgres_node_type
