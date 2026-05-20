@@ -96,8 +96,8 @@ resource "kubernetes_secret" "db_preprod" {
       "postgres://%s:%s@%s:%d/%s?sslmode=require",
       scaleway_rdb_user.app_preprod[each.key].name,
       urlencode(random_password.db_app_preprod[each.key].result),
-      scaleway_rdb_instance.shared.endpoint_ip,
-      scaleway_rdb_instance.shared.endpoint_port,
+      scaleway_rdb_instance.shared.private_network[0].ip,
+      scaleway_rdb_instance.shared.private_network[0].port,
       scaleway_rdb_database.app_preprod[each.key].name,
     )
   }

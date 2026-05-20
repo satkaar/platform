@@ -132,9 +132,9 @@ resource "random_password" "db_admin" {
   override_special = "!#$%&*+-_="
 }
 
-# Endpoint LB public conservé pour la migration data initiale depuis local
-# (SQLite → Postgres). À durcir plus tard : passer en private_network seul
-# une fois la migration faite, et utiliser un peering avec le VPC Kapsule.
+# Endpoint LB public conservé en parallèle du private_network pour permettre
+# les migrations data ad-hoc depuis local (pg_dump/restore). À retirer plus
+# tard (set load_balancer=[]) une fois la stack stable.
 resource "scaleway_rdb_instance" "shared" {
   name                      = "ccpfml-db"
   project_id                = var.project_id
@@ -148,6 +148,13 @@ resource "scaleway_rdb_instance" "shared" {
   disable_backup            = false
   backup_schedule_frequency = 24
   backup_schedule_retention = 7
+
+  # Endpoint privé sur le même VPC que Kapsule — les pods accèdent à
+  # Postgres sans passer par Internet ni un LB Scaleway facturé.
+  private_network {
+    pn_id       = scaleway_vpc_private_network.this.id
+    enable_ipam = true
+  }
 }
 
 resource "random_password" "db_app" {
@@ -311,12 +318,14 @@ resource "kubernetes_secret" "db" {
   }
 
   data = {
+    # Endpoint privé via le VPC (private_network[0]) — pas de trafic DB par
+    # Internet. SSL toujours requis : Scaleway termine le TLS au niveau RDB.
     DATABASE_URL = format(
       "postgres://%s:%s@%s:%d/%s?sslmode=require",
       scaleway_rdb_user.app[each.key].name,
       urlencode(random_password.db_app[each.key].result),
-      scaleway_rdb_instance.shared.endpoint_ip,
-      scaleway_rdb_instance.shared.endpoint_port,
+      scaleway_rdb_instance.shared.private_network[0].ip,
+      scaleway_rdb_instance.shared.private_network[0].port,
       scaleway_rdb_database.app[each.key].name,
     )
   }
