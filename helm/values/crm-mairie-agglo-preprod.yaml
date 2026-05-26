@@ -20,6 +20,7 @@ env:
   # Active le gate dans entrypoint.sh : les pods web sautent migrate/seeds
   # (gérés par le Job Helm ci-dessous, exécuté une fois par déploiement).
   SKIP_DB_INIT: "true"
+  LOG_FORMAT: "json"
 
 migrationJob:
   enabled: true
