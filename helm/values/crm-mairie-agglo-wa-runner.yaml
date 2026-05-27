@@ -1,6 +1,4 @@
-# Runner WhatsApp (Baileys) du CRM — 3ème release Helm sur le MÊME chart
-# django-app et la MÊME image. Dispatch via RUN_MODE=wa-runner
-# dans entrypoint.sh (qui exec entrypoint-wa-runner.sh).
+# Runner WhatsApp (Baileys) du CRM — prod.
 
 nameOverride: crm-wa-runner
 fullnameOverride: crm-wa-runner
@@ -24,7 +22,7 @@ env:
   RUN_MODE: "wa-runner"
   DEBUG: "False"
   ALLOWED_HOSTS: "*"
-  PORT: "8081"
+  PORT: "8080"
 
 envFromSecretRefs:
   - name: crm-secrets
