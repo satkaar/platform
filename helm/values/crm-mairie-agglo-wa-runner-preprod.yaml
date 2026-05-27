@@ -1,0 +1,50 @@
+# Runner WhatsApp (Baileys) du CRM — preprod.
+
+nameOverride: crm-wa-runner
+fullnameOverride: crm-wa-runner
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-mairie-agglo
+  tag: preprod-latest
+
+replicaCount: 1
+
+strategy:
+  type: Recreate
+
+service:
+  enabled: false
+
+ingress:
+  enabled: false
+
+env:
+  RUN_MODE: "wa-runner"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "*"
+  PORT: "8081"
+
+envFromSecretRefs:
+  - name: crm-secrets
+
+probes:
+  liveness:
+    enabled: true
+    tcp: false
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readiness:
+    enabled: true
+    tcp: false
+    path: /readyz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
