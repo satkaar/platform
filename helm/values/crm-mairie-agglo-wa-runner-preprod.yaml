@@ -22,7 +22,7 @@ env:
   RUN_MODE: "wa-runner"
   DEBUG: "False"
   ALLOWED_HOSTS: "*"
-  PORT: "8081"
+  PORT: "8080"
 
 envFromSecretRefs:
   - name: crm-secrets
