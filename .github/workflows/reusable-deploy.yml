@@ -58,6 +58,11 @@ on:
         type: boolean
         required: false
         default: false
+      deploy-wa-runner:
+        description: Si true, deploy aussi la release Helm <app>-wa-runner (WhatsApp Baileys).
+        type: boolean
+        required: false
+        default: false
       platform-ref:
         description: Ref git du repo `satkaar/platform` à checkout (chart + values).
         type: string
@@ -470,3 +475,81 @@ jobs:
         if: always()
         run: |
           kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="${APP_NAME}-runner" -o wide || true
+
+  deploy-wa-runner:
+    name: Helm upgrade WA runner (${{ needs.resolve-env.outputs.name }})
+    needs: [resolve-env, build, scan, deploy]
+    if: ${{ inputs.deploy-wa-runner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.resolve-env.outputs.gh-environment }}
+    env:
+      ENV_NAME: ${{ needs.resolve-env.outputs.name }}
+      NAMESPACE: ${{ needs.resolve-env.outputs.namespace }}
+      IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+      APP_NAME: ${{ inputs.app-name }}
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          repository: satkaar/platform
+          ref: ${{ inputs.platform-ref }}
+          token: ${{ github.token }}
+          path: platform
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+          token: ${{ github.token }}
+
+      - name: Install Scaleway CLI + kubeconfig
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_DEFAULT_PROJECT_ID }}
+          SCW_DEFAULT_ORGANIZATION_ID: ${{ vars.SCW_DEFAULT_ORGANIZATION_ID }}
+          SCW_DEFAULT_REGION: ${{ inputs.scw-region }}
+          CLUSTER_NAME: ${{ inputs.cluster-name }}
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/scw \
+            "https://github.com/scaleway/scaleway-cli/releases/download/v2.52.0/scaleway-cli_2.52.0_linux_amd64"
+          chmod +x /tmp/scw && sudo mv /tmp/scw /usr/local/bin/scw
+          CLUSTER_ID=$(scw k8s cluster list region=${SCW_DEFAULT_REGION} -o json \
+            | jq -r --arg n "$CLUSTER_NAME" '.[] | select(.name == $n) | .id')
+          mkdir -p "$HOME/.kube"
+          scw k8s kubeconfig get "$CLUSTER_ID" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Helm upgrade wa-runner
+        run: |
+          set -euo pipefail
+          WA_RELEASE="${APP_NAME}-wa-runner"
+          VALUES="platform/helm/values/${WA_RELEASE}.yaml"
+          if [ "$ENV_NAME" = "preprod" ]; then
+            VALUES="platform/helm/values/${WA_RELEASE}-preprod.yaml"
+          fi
+          if [ ! -f "$VALUES" ]; then
+            echo "::error::Values file $VALUES introuvable"
+            exit 1
+          fi
+          helm upgrade --install "$WA_RELEASE" \
+            platform/helm/django-app \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES" \
+            --set image.tag="$IMAGE_TAG" \
+            --atomic \
+            --wait \
+            --timeout 5m
+
+      - name: WA runner status
+        if: always()
+        run: |
+          kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/instance="${APP_NAME}-wa-runner" -o wide || true
