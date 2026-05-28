@@ -9,11 +9,11 @@ image:
 replicaCount: 2
 
 ingress:
-  host: crm.satkaar.io
+  host: crm.ccfml.04.satkaar.io
 
 env:
   DEBUG: "False"
-  ALLOWED_HOSTS: "crm.satkaar.io"
+  ALLOWED_HOSTS: "crm.ccfml.04.satkaar.io"
   GUNICORN_WORKERS: "2"
   PORT: "8080"
   # Active le gate dans entrypoint.sh : les pods web sautent migrate/seeds
