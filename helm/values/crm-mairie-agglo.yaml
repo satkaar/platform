@@ -34,6 +34,7 @@ migrationJob:
 #   --from-literal=DJANGO_SECRET_KEY=... --from-literal=MISTRAL_API_KEY=...
 envFromSecretRefs:
   - name: crm-secrets
+  - name: media-credentials
 
 resources:
   requests:
