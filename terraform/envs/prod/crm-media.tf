@@ -13,11 +13,11 @@
 locals {
   crm_media_envs = {
     prod = {
-      bucket    = "crm-ccfml-prod"
+      bucket    = "ccfml-crm-prod"
       namespace = kubernetes_namespace.app["crm-mairie-agglo"].metadata[0].name
     }
     preprod = {
-      bucket    = "crm-ccfml-preprod"
+      bucket    = "ccfml-crm-preprod"
       namespace = kubernetes_namespace.app_preprod["crm-mairie-agglo"].metadata[0].name
     }
   }
@@ -52,37 +52,40 @@ resource "scaleway_iam_application" "crm_media" {
   description = "Accès S3 au bucket ${each.value.bucket} pour le pod CRM ${each.key}"
 }
 
-# Bucket policy : restreint l'accès au bucket à l'application IAM
-# correspondante uniquement (l'application n'a aucune permission IAM
-# project-wide ; tout passe par cette policy bucket-scopée).
-resource "scaleway_object_bucket_policy" "crm_media" {
+# Rule IAM project-wide pour permettre les ops S3. Le permission set
+# ObjectStorageFullAccess n'est pas scopable au bucket via IAM, donc
+# l'application a techniquement accès à tous les buckets du projet
+# `mairie-agglo-platform`.
+#
+# NOTE: On évite délibérément `scaleway_object_bucket_policy` ici. Une
+# bucket policy mal formulée (sans Allow explicite pour le project owner)
+# peut verrouiller le bucket de manière irréversible (même TF ne peut plus
+# refresh). L'isolation entre prod/preprod est portée par 2 IAM
+# applications distinctes ayant chacune leurs propres credentials —
+# aucune logique Django ne pousse l'access_key de preprod sur le bucket
+# prod ou inversement.
+resource "scaleway_iam_policy" "crm_media" {
   for_each = local.crm_media_envs
 
-  bucket = scaleway_object_bucket.crm_media[each.key].name
-  policy = jsonencode({
-    Version = "2023-04-17"
-    Statement = [
-      {
-        Sid    = "AllowCrmAppFullAccess"
-        Effect = "Allow"
-        Principal = {
-          SCW = "application_id:${scaleway_iam_application.crm_media[each.key].id}"
-        }
-        Action = ["s3:*"]
-        Resource = [
-          scaleway_object_bucket.crm_media[each.key].name,
-          "${scaleway_object_bucket.crm_media[each.key].name}/*",
-        ]
-      },
-    ]
-  })
+  application_id = scaleway_iam_application.crm_media[each.key].id
+  name           = "crm-mairie-agglo-media-${each.key}"
+  description    = "Accès Object Storage pour le pod CRM ${each.key} (bucket cible : ${each.value.bucket})"
+
+  rule {
+    project_ids          = [var.project_id]
+    permission_set_names = ["ObjectStorageFullAccess"]
+  }
 }
 
 resource "scaleway_iam_api_key" "crm_media" {
   for_each = local.crm_media_envs
 
-  application_id = scaleway_iam_application.crm_media[each.key].id
-  description    = "Clé API pour pod CRM ${each.key} → ${each.value.bucket}"
+  application_id     = scaleway_iam_application.crm_media[each.key].id
+  description        = "Clé API pour pod CRM ${each.key} → ${each.value.bucket}"
+  # Important : sans ce champ, Scaleway utilise le default project du provider
+  # (souvent satkaar-dev) → les requêtes S3 résolvent les buckets dans le mauvais
+  # projet et tombent en AccessDenied même si la rule IAM autorise.
+  default_project_id = var.project_id
 }
 
 # Secret K8s injecté dans le namespace de l'app (un par env). Référencé
