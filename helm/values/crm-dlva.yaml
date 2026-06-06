@@ -1,0 +1,59 @@
+# CRM DLVA — 2e déploiement du CRM mairie/agglo (même repo source que
+# crm-mairie-agglo, même Dockerfile). La sélection du territoire se fait
+# uniquement via COLLECTIVITE=dlva (cf. referentiels/ du repo crm).
+# Infra provisionnée par terraform/envs/prod/crm-dlva.tf (Postgres dédiée,
+# bucket S3, namespace, db-credentials, media-credentials, DNS).
+
+nameOverride: crm-dlva
+fullnameOverride: crm-dlva
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-dlva
+  tag: latest
+
+# Démarrage à 1 réplique (instance neuve, trafic faible). Passer à 2 quand
+# les agents DLVA seront à bord — le migrationJob rend le scaling safe.
+replicaCount: 1
+
+ingress:
+  host: crm.dlva.04.satkaar.io
+
+env:
+  # ⭐ La variable qui fait tout : charge referentiels/dlva.py (organigramme,
+  # branding, fixtures, routage géographique DLVA).
+  COLLECTIVITE: "dlva"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "crm.dlva.04.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  # Les pods web sautent migrate/seeds (gérés par le Job Helm ci-dessous).
+  SKIP_DB_INIT: "true"
+  LOG_FORMAT: "json"
+
+migrationJob:
+  enabled: true
+  command: ["./entrypoint-migrate.sh"]
+  backoffLimit: 1
+  # 15 min : première exécution = migrate complet + seeds sur base vierge.
+  activeDeadlineSeconds: 900
+
+# Secrets applicatifs : DJANGO_SECRET_KEY, SEED_DEFAULT_PASSWORD,
+# MISTRAL_API_KEY, etc.
+# kubectl -n crm-dlva create secret generic crm-secrets \
+#   --from-literal=DJANGO_SECRET_KEY=... --from-literal=SEED_DEFAULT_PASSWORD=...
+# (db-credentials et media-credentials sont créés par Terraform.)
+envFromSecretRefs:
+  - name: crm-secrets
+  - name: media-credentials
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 512Mi
+  limits:
+    cpu: 1500m
+    memory: 1Gi
+
+# NOTE : pas de runner Telegram/WhatsApp pour DLVA pour l'instant
+# (deploy-runner/deploy-wa-runner non activés dans le job DLVA de deploy.yml).
+# Le jour venu : créer crm-dlva-runner.yaml + secrets dédiés.
