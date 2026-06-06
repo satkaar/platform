@@ -1,0 +1,35 @@
+nameOverride: satkaar-site
+fullnameOverride: satkaar-site
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/satkaar-site
+  tag: preprod-latest
+
+replicaCount: 1
+
+ingress:
+  host: preprod.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.satkaar.io"
+  SITE_URL: "https://preprod.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+
+# Pas de Postgres : SQLite éphémère dans le conteneur (cf. satkaar-site.yaml).
+envFromSecrets: null
+
+# DJANGO_SECRET_KEY — secret créé manuellement (valeur preprod distincte) :
+#   kubectl -n satkaar-site-preprod create secret generic satkaar-site-secrets \
+#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+envFromSecretRefs:
+  - name: satkaar-site-secrets
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi

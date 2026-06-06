@@ -1,0 +1,35 @@
+nameOverride: satkaar-site
+fullnameOverride: satkaar-site
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/satkaar-site
+  tag: latest
+
+ingress:
+  host: satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "satkaar.io"
+  SITE_URL: "https://satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+
+# Pas de Postgres : SQLite éphémère dans le conteneur (choix assumé, simple
+# vitrine). null supprime le défaut DATABASE_URL/db-credentials du chart.
+envFromSecrets: null
+
+# DJANGO_SECRET_KEY (et SMTP plus tard) — secret créé manuellement :
+#   kubectl -n satkaar-site create secret generic satkaar-site-secrets \
+#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+envFromSecretRefs:
+  - name: satkaar-site-secrets
+
+# Site vitrine : footprint léger.
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi

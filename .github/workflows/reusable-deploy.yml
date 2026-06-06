@@ -53,6 +53,11 @@ on:
         type: string
         required: false
         default: "/"
+      require-db:
+        description: Si false, ne pas exiger le secret db-credentials (app sans Postgres, ex. satkaar-site en SQLite éphémère).
+        type: boolean
+        required: false
+        default: true
       deploy-runner:
         description: Si true, deploy aussi la release Helm <app>-runner (CRM uniquement).
         type: boolean
@@ -323,7 +328,7 @@ jobs:
             echo "::error::Namespace '$NAMESPACE' absent. Lancer 'make prod-apply' dans platform/terraform avant le 1er deploy $ENV_NAME."
             exit 1
           fi
-          if ! kubectl -n "$NAMESPACE" get secret db-credentials > /dev/null 2>&1; then
+          if [ "${{ inputs.require-db }}" = "true" ] && ! kubectl -n "$NAMESPACE" get secret db-credentials > /dev/null 2>&1; then
             echo "::error::Secret 'db-credentials' manquant dans $NAMESPACE. Provisionné par Terraform — lancer 'make prod-apply'."
             exit 1
           fi
