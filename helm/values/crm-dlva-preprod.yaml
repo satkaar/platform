@@ -1,0 +1,53 @@
+# CRM DLVA — environnement PREPROD (même image que crm-dlva, tag preprod-*).
+# Infra provisionnée par terraform/envs/prod/crm-dlva-preprod.tf : database
+# dédiée sur l'instance dlva-db (isolation DLVA conservée, pas de 2e instance),
+# bucket S3 dlva-crm-preprod, namespace crm-dlva-preprod, DNS.
+
+nameOverride: crm-dlva
+fullnameOverride: crm-dlva
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/crm-dlva
+  tag: preprod-latest
+
+# 1 réplica suffit en preprod — le migrationJob gère migrate + seeds.
+replicaCount: 1
+
+ingress:
+  host: preprod.crm.dlva.04.satkaar.io
+
+env:
+  # ⭐ La variable qui fait tout : charge referentiels/dlva (organigramme,
+  # branding, fixtures, routage géographique DLVA).
+  COLLECTIVITE: "dlva"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.crm.dlva.04.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  # Les pods web sautent migrate/seeds (gérés par le Job Helm ci-dessous).
+  SKIP_DB_INIT: "true"
+  LOG_FORMAT: "json"
+
+migrationJob:
+  enabled: true
+  command: ["./entrypoint-migrate.sh"]
+  backoffLimit: 1
+  # 15 min : première exécution = migrate complet + seeds sur base vierge.
+  activeDeadlineSeconds: 900
+
+# Secrets applicatifs preprod. À provisionner manuellement :
+# kubectl -n crm-dlva-preprod create secret generic crm-secrets \
+#   --from-literal=DJANGO_SECRET_KEY=... --from-literal=SEED_DEFAULT_PASSWORD=... \
+#   --from-literal=MISTRAL_API_KEY=...
+# (db-credentials et media-credentials sont créés par Terraform.)
+envFromSecretRefs:
+  - name: crm-secrets
+  - name: media-credentials
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi
