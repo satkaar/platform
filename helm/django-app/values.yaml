@@ -43,6 +43,9 @@ ingress:
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Upload de photos (salles/véhicules/installations) en sélection multiple :
+    # le corps = somme des fichiers. Défaut nginx (1 Mo) → 413. On élargit.
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
 
 # Variables d'environnement non sensibles, exposées en ConfigMap.
 env:
