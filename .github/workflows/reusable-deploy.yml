@@ -183,6 +183,18 @@ jobs:
             echo "ref=$REG/$APP:$TAG"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Prepare SSH deploy key (deps GitHub privées)
+        env:
+          AGENDA_DEPLOY_KEY: ${{ secrets.AGENDA_DEPLOY_KEY }}
+        run: |
+          # On écrit la clé dans un fichier (gère le multi-lignes, contrairement
+          # à un secret inline qui serait découpé sur les retours ligne). Fichier
+          # vide si l'app n'a pas le secret → build normal.
+          install -m 600 /dev/null "$RUNNER_TEMP/ssh_key"
+          if [ -n "$AGENDA_DEPLOY_KEY" ]; then
+            printf '%s\n' "$AGENDA_DEPLOY_KEY" > "$RUNNER_TEMP/ssh_key"
+          fi
+
       - name: Build & push (linux/amd64)
         uses: docker/build-push-action@v5
         with:
@@ -195,11 +207,10 @@ jobs:
           sbom: false
           build-args: |
             DJANGO_WSGI_MODULE=${{ inputs.wsgi-module }}
-          # Deploy key SSH (secret BuildKit) pour installer des deps sur repos
-          # GitHub privés (ex. satkaar/agenda). Vide si l'app n'a pas le secret
-          # → build normal.
-          secrets: |
-            ssh_key=${{ secrets.AGENDA_DEPLOY_KEY }}
+          # Deploy key SSH (depuis un fichier) pour installer des deps sur repos
+          # GitHub privés (ex. satkaar/agenda). Fichier vide → build normal.
+          secret-files: |
+            ssh_key=${{ runner.temp }}/ssh_key
           tags: |
             ${{ inputs.registry }}/${{ inputs.app-name }}:${{ steps.tag.outputs.tag }}
             ${{ inputs.registry }}/${{ inputs.app-name }}:${{ needs.resolve-env.outputs.name }}-latest
