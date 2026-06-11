@@ -195,10 +195,11 @@ jobs:
           sbom: false
           build-args: |
             DJANGO_WSGI_MODULE=${{ inputs.wsgi-module }}
-          # Secret BuildKit pour installer des deps sur repos GitHub privés
-          # (ex. satkaar/agenda). Vide si l'org n'a pas le secret → build normal.
+          # Deploy key SSH (secret BuildKit) pour installer des deps sur repos
+          # GitHub privés (ex. satkaar/agenda). Vide si l'app n'a pas le secret
+          # → build normal.
           secrets: |
-            gh_token=${{ secrets.GH_PACKAGES_TOKEN }}
+            ssh_key=${{ secrets.AGENDA_DEPLOY_KEY }}
           tags: |
             ${{ inputs.registry }}/${{ inputs.app-name }}:${{ steps.tag.outputs.tag }}
             ${{ inputs.registry }}/${{ inputs.app-name }}:${{ needs.resolve-env.outputs.name }}-latest
