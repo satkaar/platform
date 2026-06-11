@@ -75,8 +75,15 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        env:
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           python -m pip install --upgrade pip
+          # Auth pour les deps sur repos GitHub privés (ex. satkaar/agenda).
+          # Absent (apps sans dep privée) → install normal.
+          if [ -n "$GH_PACKAGES_TOKEN" ]; then
+            git config --global url."https://x-access-token:${GH_PACKAGES_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
           pip install -r requirements.txt
 
       - name: Django system check
