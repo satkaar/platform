@@ -77,16 +77,25 @@ jobs:
       - name: Install dependencies
         env:
           AGENDA_DEPLOY_KEY: ${{ secrets.AGENDA_DEPLOY_KEY }}
+          MAIRIE_DEPLOY_KEY: ${{ secrets.MAIRIE_DEPLOY_KEY }}
         run: |
           python -m pip install --upgrade pip
-          # Deploy key SSH pour les deps sur repos GitHub privés (ex. satkaar/agenda).
-          # Absente (apps sans dep privée) → install normal.
+          # Deploy keys SSH pour les deps sur repos GitHub privés. Une deploy key
+          # = 1 repo, donc une clé par repo, sélectionnée via un alias d'hôte SSH
+          # (~/.ssh/config). Clé absente → bloc sauté (apps sans dep privée).
+          #   - agenda : Host github.com (URL requirements inchangée)
+          #   - mairie : Host github-mairie → requirements pointe sur git@github-mairie
+          mkdir -p -m 0700 ~/.ssh
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
           if [ -n "$AGENDA_DEPLOY_KEY" ]; then
-            mkdir -p -m 0700 ~/.ssh
-            printf '%s\n' "$AGENDA_DEPLOY_KEY" > ~/.ssh/id_deploy
-            chmod 600 ~/.ssh/id_deploy
-            ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
-            export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes"
+            printf '%s\n' "$AGENDA_DEPLOY_KEY" > ~/.ssh/id_agenda
+            chmod 600 ~/.ssh/id_agenda
+            printf 'Host github.com\n  IdentityFile ~/.ssh/id_agenda\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+          fi
+          if [ -n "$MAIRIE_DEPLOY_KEY" ]; then
+            printf '%s\n' "$MAIRIE_DEPLOY_KEY" > ~/.ssh/id_mairie
+            chmod 600 ~/.ssh/id_mairie
+            printf 'Host github-mairie\n  HostName github.com\n  IdentityFile ~/.ssh/id_mairie\n  IdentitiesOnly yes\n' >> ~/.ssh/config
           fi
           pip install -r requirements.txt
 
