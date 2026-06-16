@@ -12,11 +12,9 @@
 # Déclaré hors de local.apps (comme satkaar-site) car ces apps n'ont ni db ni
 # le mapping subdomain → record DNS de local.apps.
 #
-# Secret applicatif (DJANGO_SECRET_KEY) — créé manuellement par environnement :
-#   kubectl -n politique create secret generic politique-secrets \
-#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
-#   kubectl -n politique-preprod create secret generic politique-secrets \
-#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+# Secret applicatif (DJANGO_SECRET_KEY) : géré par Terraform (random_password +
+# kubernetes_secret ci-dessous), pas en kubectl manuel. Le secret `politique-secrets`
+# est référencé par les values Helm (envFromSecretRefs).
 # ──────────────────────────────────────────────────────────────────────────────
 
 locals {
@@ -52,4 +50,29 @@ resource "ovh_domain_zone_record" "politique" {
   fieldtype = "A"
   ttl       = 300
   target    = local.ingress_lb_ip
+}
+
+# ── Secret applicatif : DJANGO_SECRET_KEY (référencé par envFromSecretRefs) ──
+
+resource "random_password" "politique_secret_key" {
+  for_each = local.politique_envs
+
+  length           = 50
+  special          = true
+  override_special = "!@#$%^&*(-_=+)"
+}
+
+resource "kubernetes_secret" "politique_secrets" {
+  for_each = local.politique_envs
+
+  metadata {
+    name      = "politique-secrets"
+    namespace = kubernetes_namespace.politique[each.key].metadata[0].name
+  }
+
+  data = {
+    DJANGO_SECRET_KEY = random_password.politique_secret_key[each.key].result
+  }
+
+  type = "Opaque"
 }
