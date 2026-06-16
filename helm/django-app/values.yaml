@@ -32,6 +32,24 @@ service:
   port: 80
   targetPort: 8080
 
+# securityContext au niveau du pod. Vide par défaut. Renseigner `fsGroup` quand
+# l'app écrit sur un volume persistant tout en tournant en non-root : le volume
+# (monté root par le CSI) devient group-writable par ce GID, ajouté en groupe
+# supplémentaire au process — l'utilisateur applicatif peut alors écrire.
+podSecurityContext: {}
+
+# Volume persistant optionnel (ex. base SQLite qui doit survivre aux
+# redéploiements). Désactivé par défaut : les apps Postgres n'en ont pas besoin.
+# Quand enabled=true, PENSER à replicaCount=1 + strategy.type=Recreate côté
+# values app : un volume ReadWriteOnce ne peut pas être monté par 2 pods, donc
+# un RollingUpdate resterait bloqué.
+persistence:
+  enabled: false
+  # storageClass: ""        # vide = StorageClass par défaut du cluster
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  mountPath: /data
+
 ingress:
   enabled: true
   className: nginx

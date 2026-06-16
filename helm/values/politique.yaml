@@ -1,0 +1,65 @@
+# politique — « Magalie et Marie by satkaar » (Django 6, repo satkaar/politique).
+# Outil de communication politique / réseaux sociaux. Servi sur
+# magalie-et-marie.satkaar.io.
+#
+# SANS Postgres : base SQLite PERSISTANTE sur un volume (PVC) — les données
+# (répertoire de personnes, relevés quotidiens) survivent aux redéploiements.
+# Le caller passe require-db=false au reusable-deploy (pas de secret
+# db-credentials attendu).
+#
+# Secret applicatif (DJANGO_SECRET_KEY) — créé manuellement AVANT le 1er deploy :
+#   kubectl -n politique create secret generic politique-secrets \
+#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+
+nameOverride: politique
+fullnameOverride: politique
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/politique
+  tag: latest
+
+ingress:
+  host: magalie-et-marie.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "magalie-et-marie.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  # SQLite sur le volume persistant monté en /data (cf. persistence.mountPath).
+  # dj-database-url lit DATABASE_URL ; 4 slashes = chemin absolu.
+  DATABASE_URL: "sqlite:////data/db.sqlite3"
+
+# Pas de Postgres : on supprime le défaut DATABASE_URL/db-credentials du chart
+# (DATABASE_URL est fourni ci-dessus via la ConfigMap, pointant sur SQLite).
+envFromSecrets: null
+
+envFromSecretRefs:
+  - name: politique-secrets
+
+# Volume persistant pour la base SQLite.
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  mountPath: /data
+
+# SQLite + volume ReadWriteOnce : un seul pod à la fois. Recreate évite que le
+# RollingUpdate reste bloqué (2 pods ne peuvent pas monter le même volume RWO).
+replicaCount: 1
+strategy:
+  type: Recreate
+
+# L'app tourne en non-root (USER appuser dans le Dockerfile). fsGroup rend le
+# volume group-writable et ajoute ce GID au process → écriture SQLite possible.
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

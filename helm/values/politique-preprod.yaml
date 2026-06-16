@@ -1,0 +1,50 @@
+# politique preprod — « Magalie et Marie by satkaar ». Servi sur
+# preprod.magalie-et-marie.satkaar.io, namespace politique-preprod.
+#
+# Secret applicatif — créé manuellement AVANT le 1er deploy preprod :
+#   kubectl -n politique-preprod create secret generic politique-secrets \
+#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+
+nameOverride: politique
+fullnameOverride: politique
+
+image:
+  repository: rg.fr-par.scw.cloud/mairie-agglo-platform/politique
+  tag: latest
+
+ingress:
+  host: preprod.magalie-et-marie.satkaar.io
+
+env:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "preprod.magalie-et-marie.satkaar.io"
+  GUNICORN_WORKERS: "2"
+  PORT: "8080"
+  DATABASE_URL: "sqlite:////data/db.sqlite3"
+
+envFromSecrets: null
+
+envFromSecretRefs:
+  - name: politique-secrets
+
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  mountPath: /data
+
+replicaCount: 1
+strategy:
+  type: Recreate
+
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
