@@ -7,9 +7,12 @@
 # Le caller passe require-db=false au reusable-deploy (pas de secret
 # db-credentials attendu).
 #
-# Secret applicatif (DJANGO_SECRET_KEY) — créé manuellement AVANT le 1er deploy :
+# Secret applicatif — créé manuellement AVANT le 1er deploy. Contient la clé
+# Django ET le jeton d'accès à l'API scraping (SCRAPING_API_TOKEN, MÊME valeur
+# que dans le secret scraping-secrets du namespace scraping) :
 #   kubectl -n politique create secret generic politique-secrets \
-#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
+#     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32) \
+#     --from-literal=SCRAPING_API_TOKEN=<jeton-partagé>
 
 nameOverride: politique
 fullnameOverride: politique
@@ -29,6 +32,10 @@ env:
   # SQLite sur le volume persistant monté en /data (cf. persistence.mountPath).
   # dj-database-url lit DATABASE_URL ; 4 slashes = chemin absolu.
   DATABASE_URL: "sqlite:////data/db.sqlite3"
+  # Import quotidien des relevés (supercronic @ 19h05 dans le pod) depuis l'API
+  # interne du service scraping (namespace scraping). Le jeton SCRAPING_API_TOKEN
+  # est fourni par le secret politique-secrets (même valeur que côté scraping).
+  SCRAPING_API_URL: "http://scraping.scraping.svc.cluster.local"
 
 # Pas de Postgres : on supprime le défaut DATABASE_URL/db-credentials du chart
 # (DATABASE_URL est fourni ci-dessus via la ConfigMap, pointant sur SQLite).
