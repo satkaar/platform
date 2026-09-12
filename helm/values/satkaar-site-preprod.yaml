@@ -5,7 +5,22 @@ image:
   repository: rg.fr-par.scw.cloud/mairie-agglo-platform/satkaar-site
   tag: preprod-latest
 
+# Nouveau site (vitrine + espace client, mail, agenda, contacts) : ses données doivent
+# survivre aux déploiements. SQLite et fichiers privés sur un volume persistant /data.
+# Un seul pod (volume ReadWriteOnce) → stratégie Recreate.
 replicaCount: 1
+strategy:
+  type: Recreate
+
+persistence:
+  enabled: true
+  size: 5Gi
+  mountPath: /data
+
+# L'image tourne en uid/gid 1001 : le volume doit lui être accessible en écriture.
+podSecurityContext:
+  fsGroup: 1001
+  fsGroupChangePolicy: OnRootMismatch
 
 ingress:
   host: preprod.satkaar.io
@@ -16,11 +31,16 @@ env:
   SITE_URL: "https://preprod.satkaar.io"
   GUNICORN_WORKERS: "2"
   PORT: "8080"
+  DJANGO_DB_PATH: "/data/db.sqlite3"
+  ESPACE_DOCUMENTS_ROOT: "/data/documents_prives"
+  # Préproduction : invisible pour les moteurs de recherche (robots.txt + X-Robots-Tag).
+  DJANGO_NOINDEX: "true"
 
-# Pas de Postgres : SQLite éphémère dans le conteneur (cf. satkaar-site.yaml).
+# Pas de Postgres : pas de DATABASE_URL.
 envFromSecrets: null
 
-# DJANGO_SECRET_KEY — secret créé manuellement (valeur preprod distincte) :
+# DJANGO_SECRET_KEY (valeur preprod distincte) ; facultatifs : COURRIEL_CLE,
+# ANTHROPIC_API_KEY, EMAIL_HOST_PASSWORD (voir DEPLOIEMENT.md du dépôt satkaar-site).
 #   kubectl -n satkaar-site-preprod create secret generic satkaar-site-secrets \
 #     --from-literal=DJANGO_SECRET_KEY=$(openssl rand -hex 32)
 envFromSecretRefs:
@@ -28,8 +48,8 @@ envFromSecretRefs:
 
 resources:
   requests:
-    cpu: 50m
-    memory: 192Mi
+    cpu: 100m
+    memory: 256Mi
   limits:
-    cpu: 300m
-    memory: 384Mi
+    cpu: 500m
+    memory: 512Mi
